@@ -128,18 +128,26 @@ def rdy(): return adc_y.read_u16() - config["offset_y"]
 
 # ─────────────────────────────────────────────────────────────────
 #  DETECCIÓN DE FRECUENCIA — zero-crossing + promedio 15s
+#  Solo cuenta cruces cuando la amplitud supera el umbral de ruido.
+#  En reposo el ADC flota y genera cruces falsos → se ignoran.
 # ─────────────────────────────────────────────────────────────────
 _zc_last = 0
 _zc_prev = 0
 _freq_acc = []
 _freq_pub = 0.0    # valor publicado en /data/live y guardado en buf_hour
 
+# Umbral mínimo de amplitud para considerar un cruce válido.
+# 3000 unidades de 16-bit ≈ 4.5% de escala = ignora ruido eléctrico del ADC.
+# Subir si en reposo sigue marcando frecuencia. Bajar si no detecta temblor real.
+NOISE_THRESHOLD = 3000
+
 def update_zc(vib, now_ms):
     global _zc_last, _zc_prev
     sign = 1 if vib >= 0 else -1
     if sign > 0 and _zc_prev < 0:
         dt = time.ticks_diff(now_ms, _zc_last)
-        if 50 < dt < 500:
+        # Solo acumular si hay movimiento real (no ruido) y frecuencia válida (1-10 Hz)
+        if 50 < dt < 500 and abs(vib) > NOISE_THRESHOLD:
             _freq_acc.append(1000.0 / (2.0 * dt))
         _zc_last = now_ms
     _zc_prev = sign
@@ -148,6 +156,8 @@ def flush_freq():
     global _freq_pub, _freq_acc
     if _freq_acc:
         _freq_pub = round(sum(_freq_acc) / len(_freq_acc), 2)
+    else:
+        _freq_pub = 0.0   # sin movimiento real → frecuencia 0
     _freq_acc = []
     return _freq_pub
 
@@ -455,3 +465,4 @@ async def main():
     while True: await asyncio.sleep(30)
 
 asyncio.run(main())
+
